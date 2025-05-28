@@ -1,5 +1,4 @@
 // lib/pages/home_page.dart
-
 import 'dart:async';
 import 'dart:convert';
 import 'package:ecommerse_website/models/category.dart';
@@ -44,8 +43,6 @@ class _HomePageState extends State<HomePage> {
     _searchController.addListener(_filterProducts);
   }
 
-  // --- REVERTED TO FAST, SIMPLE VERSION ---
-  // No upfront validation happens here, making the UI load instantly.
   Future<void> fetchProducts() async {
     final url = Uri.parse('https://api.escuelajs.co/api/v1/products');
     try {
@@ -462,7 +459,7 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
-// --- FINAL, CORRECTED IMPLEMENTATION: ProductTileWithButtons is a StatefulWidget ---
+// --- FINAL, CORRECTED IMPLEMENTATION: ProductTileWithButtons with Overflow Fix ---
 class ProductTileWithButtons extends StatefulWidget {
   final Product product;
   final bool isFavorite;
@@ -487,13 +484,11 @@ class ProductTileWithButtons extends StatefulWidget {
 
 class _ProductTileWithButtonsState extends State<ProductTileWithButtons> {
   bool _isImageValid = true;
-  bool _isValidationDone = false; // Flag to prevent multiple validation runs
+  bool _isValidationDone = false;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // This is the correct lifecycle method to use `precacheImage`.
-    // It runs only once per widget creation in the tree.
     if (!_isValidationDone) {
       _validateImage();
       _isValidationDone = true;
@@ -514,12 +509,10 @@ class _ProductTileWithButtonsState extends State<ProductTileWithButtons> {
 
   @override
   Widget build(BuildContext context) {
-    // If the image is invalid, the widget hides itself completely.
     if (!_isImageValid) {
       return const SizedBox.shrink();
     }
 
-    // If the image is valid, build the card as normal.
     return GestureDetector(
       onTap: () {
         final homePageState = context.findAncestorStateOfType<_HomePageState>()!;
@@ -562,20 +555,28 @@ class _ProductTileWithButtonsState extends State<ProductTileWithButtons> {
                   children: [
                     Text(widget.product.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 14)),
                     const SizedBox(height: 4),
+                    // --- ROW WITH OVERFLOW FIX ---
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text('\$${widget.product.price.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-                        const Spacer(),
-                        IconButton(
-                          visualDensity: VisualDensity.compact,
-                          padding: EdgeInsets.zero,
-                          icon: Icon(widget.isFavorite ? Icons.favorite : Icons.favorite_border, color: Colors.red, size: 22),
-                          onPressed: widget.onToggleFavorite,
+                        Expanded(
+                          child: Text(
+                            '\$${widget.product.price.toStringAsFixed(2)}',
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
                         IconButton(
                           visualDensity: VisualDensity.compact,
                           padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          icon: Icon(widget.isFavorite ? Icons.favorite : Icons.favorite_border, color: Colors.red, size: 22),
+                          onPressed: widget.onToggleFavorite,
+                        ),
+                        const SizedBox(width: 4),
+                        IconButton(
+                          visualDensity: VisualDensity.compact,
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
                           icon: Icon(widget.isInCart ? Icons.check_circle : Icons.add_shopping_cart,
                               color: widget.isInCart ? Colors.green : Colors.blue, size: 22),
                           onPressed: widget.isInCart ? widget.onViewCart : widget.onToggleCart,
