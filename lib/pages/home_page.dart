@@ -23,7 +23,7 @@ class _HomePageState extends State<HomePage> {
   int currentIndex = 0;
   List<Product> allProducts = [];
   List<Category> categories = [];
-  final Set<int> cart = {};
+  final List<CartItem> _cartItems = [];
   final Set<int> favorites = {};
   bool _isSearching = false;
   final TextEditingController _searchController = TextEditingController();
@@ -32,9 +32,7 @@ class _HomePageState extends State<HomePage> {
   late final PageController _pageController;
   Timer? _bannerTimer;
   int _currentPage = 0;
-
   final List<String> _pageTitles = ['Discover', 'My Cart', 'Favorites', 'Messages', 'My Profile'];
-
   bool isMobile(BuildContext context) => MediaQuery.of(context).size.width < 700;
 
   @override
@@ -46,22 +44,32 @@ class _HomePageState extends State<HomePage> {
     _searchController.addListener(_filterProducts);
   }
 
-  void _filterProducts() {
-    final query = _searchController.text.toLowerCase();
-    setState(() {
-      _filteredProducts = query.isEmpty ? allProducts : allProducts.where((p) => p.title.toLowerCase().contains(query)).toList();
-    });
-  }
+  // --- REVERTED TO FAST, SIMPLE VERSION ---
+  // No upfront validation happens here, making the UI load instantly.
+  Future<void> fetchProducts() async {
+    final url = Uri.parse('https://api.escuelajs.co/api/v1/products');
+    try {
+      final response = await http.get(url);
+      if (response.statusCode == 200) {
+        final List data = json.decode(response.body);
+        final products = data
+            .map((item) => Product.fromJson(item))
+            .where((p) => p.imageUrl.isNotEmpty && p.imageUrl.startsWith('http'))
+            .toList();
 
-  void _startBannerTimer() {
-    if (allProducts.isEmpty) return;
-    _bannerTimer?.cancel();
-    _bannerTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
-      if (_pageController.hasClients) {
-        _currentPage = (_currentPage + 1) % allProducts.take(5).length;
-        _pageController.animateToPage(_currentPage, duration: const Duration(milliseconds: 600), curve: Curves.easeInOut);
+        if (!mounted) return;
+
+        setState(() {
+          allProducts = products..shuffle();
+          _filteredProducts = allProducts;
+        });
+
+        _startBannerTimer();
       }
-    });
+    } catch (e) {
+      if (!mounted) return;
+      print("Error fetching products: $e");
+    }
   }
 
   @override
@@ -81,30 +89,57 @@ class _HomePageState extends State<HomePage> {
       if (response.statusCode == 200) {
         final List data = json.decode(response.body);
         final filtered = data.map((item) => Category.fromJson(item)).where((cat) => cat.image.isNotEmpty && cat.image.startsWith('http')).toList();
+        if (!mounted) return;
         setState(() => categories = filtered.take(5).toList());
       }
     } catch (e) { print("Error fetching categories: $e"); }
   }
 
-  Future<void> fetchProducts() async {
-    final url = Uri.parse('https://api.escuelajs.co/api/v1/products');
-    try {
-      final response = await http.get(url);
-      if (response.statusCode == 200) {
-        final List data = json.decode(response.body);
-        final products = data.map((item) => Product.fromJson(item)).where((p) => p.imageUrl.isNotEmpty).toList()..shuffle();
-        setState(() {
-          allProducts = products;
-          _filteredProducts = products;
-        });
-        _startBannerTimer();
-      }
-    } catch (e) { print("Error fetching products: $e"); }
+  void _filterProducts() {
+    final query = _searchController.text.toLowerCase();
+    setState(() {
+      _filteredProducts = query.isEmpty ? allProducts : allProducts.where((p) => p.title.toLowerCase().contains(query)).toList();
+    });
   }
 
-  void toggleCart(Product product) => setState(() => cart.contains(product.id) ? cart.remove(product.id) : cart.add(product.id));
+  void _startBannerTimer() {
+    if (allProducts.isEmpty) return;
+    _bannerTimer?.cancel();
+    _bannerTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
+      if (_pageController.hasClients && allProducts.length >= 5) {
+        _currentPage = (_currentPage + 1) % 5;
+        _pageController.animateToPage(_currentPage, duration: const Duration(milliseconds: 600), curve: Curves.easeInOut);
+      }
+    });
+  }
+
+  void addToCart(Product product) {
+    setState(() {
+      if (!_cartItems.any((item) => item.product.id == product.id)) {
+        _cartItems.add(CartItem(product: product));
+      }
+    });
+  }
+
+  void toggleCart(Product product) {
+    setState(() {
+      final isAlreadyInCart = _cartItems.any((item) => item.product.id == product.id);
+      if (isAlreadyInCart) {
+        _cartItems.removeWhere((item) => item.product.id == product.id);
+      } else {
+        _cartItems.add(CartItem(product: product));
+      }
+    });
+  }
+
   void toggleFavorite(Product product) => setState(() => favorites.contains(product.id) ? favorites.remove(product.id) : favorites.add(product.id));
   void _viewCart() => setState(() => currentIndex = 1);
+
+  void _removeItemsFromCart(Set<int> productIdsToRemove) {
+    setState(() {
+      _cartItems.removeWhere((cartItem) => productIdsToRemove.contains(cartItem.product.id));
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -198,7 +233,7 @@ class _HomePageState extends State<HomePage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (showBannerAndCategories) ...[
+          if (showBannerAndCategories && allProducts.length >= 5) ...[
             _buildBanner(),
             _buildSectionHeader("Categories", () {
               Navigator.push(context, MaterialPageRoute(builder: (context) => const CategoriesPage()));
@@ -273,22 +308,27 @@ class _HomePageState extends State<HomePage> {
           height: 200,
           child: PageView.builder(
             controller: _pageController,
-            itemCount: allProducts.take(5).length,
+            itemCount: 5,
             onPageChanged: (index) => setState(() => _currentPage = index),
             itemBuilder: (context, index) {
               final product = allProducts[index];
-              // --- BANNER CLICK FIX: Wrap the banner item with GestureDetector and Hero ---
               return GestureDetector(
                 onTap: () {
                   Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (context) => ProductDetailPage(product: product),
+                      builder: (context) => ProductDetailPage(
+                        product: product,
+                        isFavorite: favorites.contains(product.id),
+                        isInCart: _cartItems.any((item) => item.product.id == product.id),
+                        onToggleFavorite: () => toggleFavorite(product),
+                        onAddToCart: () => addToCart(product),
+                        onViewCart: _viewCart,
+                      ),
                     ),
                   );
                 },
                 child: Hero(
-                  // Use a unique tag that matches the one in ProductDetailPage
                   tag: 'product_image_${product.id}',
                   child: Container(
                     margin: const EdgeInsets.symmetric(horizontal: 8.0),
@@ -305,7 +345,7 @@ class _HomePageState extends State<HomePage> {
         const SizedBox(height: 12),
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
-          children: List.generate(allProducts.take(5).length, (index) => AnimatedContainer(
+          children: List.generate(5, (index) => AnimatedContainer(
             duration: const Duration(milliseconds: 300),
             margin: const EdgeInsets.symmetric(horizontal: 3),
             height: 8,
@@ -330,6 +370,7 @@ class _HomePageState extends State<HomePage> {
       ),
     );
   }
+
   Widget _gridProductList(int crossAxisCount, double childAspectRatio) {
     if (_filteredProducts.isEmpty && _searchController.text.isNotEmpty) {
       return const Center(child: Padding(padding: EdgeInsets.all(32.0), child: Text("No products found for your search.", textAlign: TextAlign.center)));
@@ -350,7 +391,7 @@ class _HomePageState extends State<HomePage> {
         return ProductTileWithButtons(
           product: product,
           isFavorite: favorites.contains(product.id),
-          isInCart: cart.contains(product.id),
+          isInCart: _cartItems.any((item) => item.product.id == product.id),
           onToggleCart: () => toggleCart(product),
           onToggleFavorite: () => toggleFavorite(product),
           onViewCart: _viewCart,
@@ -358,11 +399,14 @@ class _HomePageState extends State<HomePage> {
       },
     );
   }
+
   Widget _buildCartTab() {
-    final cartProductObjects = allProducts.where((p) => cart.contains(p.id)).toList();
-    final cartItems = cartProductObjects.map((product) => CartItem(product: product)).toList();
-    return CartPage(cartItems: cartItems);
+    return CartPage(
+      cartItems: _cartItems,
+      onItemsRemoved: _removeItemsFromCart,
+    );
   }
+
   Widget _buildFavoritesTab() {
     final favoriteProducts = allProducts.where((p) => favorites.contains(p.id)).toList();
     return favoriteProducts.isEmpty ? const Center(child: Text('No favorites added.')) : GridView.builder(
@@ -379,7 +423,7 @@ class _HomePageState extends State<HomePage> {
         return ProductTileWithButtons(
           product: product,
           isFavorite: favorites.contains(product.id),
-          isInCart: cart.contains(product.id),
+          isInCart: _cartItems.any((item) => item.product.id == product.id),
           onToggleCart: () => toggleCart(product),
           onToggleFavorite: () => toggleFavorite(product),
           onViewCart: _viewCart,
@@ -387,8 +431,10 @@ class _HomePageState extends State<HomePage> {
       },
     );
   }
+
   Widget _buildMessagesTab() => const Center(child: Text("Messages tab"));
   Widget _buildProfileTab() => ProfilePage(user: widget.loggedInUser);
+
   Widget _buildBottomNavBar() {
     return Container(
       margin: const EdgeInsets.all(20),
@@ -416,7 +462,8 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
-class ProductTileWithButtons extends StatelessWidget {
+// --- FINAL, CORRECTED IMPLEMENTATION: ProductTileWithButtons is a StatefulWidget ---
+class ProductTileWithButtons extends StatefulWidget {
   final Product product;
   final bool isFavorite;
   final bool isInCart;
@@ -435,13 +482,63 @@ class ProductTileWithButtons extends StatelessWidget {
   });
 
   @override
+  State<ProductTileWithButtons> createState() => _ProductTileWithButtonsState();
+}
+
+class _ProductTileWithButtonsState extends State<ProductTileWithButtons> {
+  bool _isImageValid = true;
+  bool _isValidationDone = false; // Flag to prevent multiple validation runs
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // This is the correct lifecycle method to use `precacheImage`.
+    // It runs only once per widget creation in the tree.
+    if (!_isValidationDone) {
+      _validateImage();
+      _isValidationDone = true;
+    }
+  }
+
+  Future<void> _validateImage() async {
+    try {
+      await precacheImage(NetworkImage(widget.product.imageUrl), context);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isImageValid = false;
+        });
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    // If the image is invalid, the widget hides itself completely.
+    if (!_isImageValid) {
+      return const SizedBox.shrink();
+    }
+
+    // If the image is valid, build the card as normal.
     return GestureDetector(
       onTap: () {
-        Navigator.push(context, MaterialPageRoute(builder: (_) => ProductDetailPage(product: product)));
+        final homePageState = context.findAncestorStateOfType<_HomePageState>()!;
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => ProductDetailPage(
+              product: widget.product,
+              isFavorite: widget.isFavorite,
+              isInCart: widget.isInCart,
+              onToggleFavorite: widget.onToggleFavorite,
+              onAddToCart: () => homePageState.addToCart(widget.product),
+              onViewCart: widget.onViewCart,
+            ),
+          ),
+        );
       },
       child: Hero(
-        tag: 'product_image_${product.id}',
+        tag: 'product_image_${widget.product.id}',
         child: Card(
           elevation: 2,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -451,10 +548,11 @@ class ProductTileWithButtons extends StatelessWidget {
             children: [
               Expanded(
                 child: Image.network(
-                  product.imageUrl,
+                  widget.product.imageUrl,
                   width: double.infinity,
                   fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) => const Center(child: Icon(Icons.broken_image, size: 40, color: Colors.grey)),
+                  errorBuilder: (context, error, stackTrace) =>
+                  const Center(child: Icon(Icons.broken_image, size: 40, color: Colors.grey)),
                 ),
               ),
               Padding(
@@ -462,24 +560,25 @@ class ProductTileWithButtons extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(product.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 14)),
+                    Text(widget.product.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 14)),
                     const SizedBox(height: 4),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text('\$${product.price.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                        Text('\$${widget.product.price.toStringAsFixed(2)}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
                         const Spacer(),
                         IconButton(
                           visualDensity: VisualDensity.compact,
                           padding: EdgeInsets.zero,
-                          icon: Icon(isFavorite ? Icons.favorite : Icons.favorite_border, color: Colors.red, size: 22),
-                          onPressed: onToggleFavorite,
+                          icon: Icon(widget.isFavorite ? Icons.favorite : Icons.favorite_border, color: Colors.red, size: 22),
+                          onPressed: widget.onToggleFavorite,
                         ),
                         IconButton(
                           visualDensity: VisualDensity.compact,
                           padding: EdgeInsets.zero,
-                          icon: Icon(isInCart ? Icons.check_circle : Icons.add_shopping_cart, color: isInCart ? Colors.green : Colors.blue, size: 22),
-                          onPressed: isInCart ? onViewCart : onToggleCart,
+                          icon: Icon(widget.isInCart ? Icons.check_circle : Icons.add_shopping_cart,
+                              color: widget.isInCart ? Colors.green : Colors.blue, size: 22),
+                          onPressed: widget.isInCart ? widget.onViewCart : widget.onToggleCart,
                         ),
                       ],
                     ),

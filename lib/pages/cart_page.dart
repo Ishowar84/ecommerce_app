@@ -1,14 +1,17 @@
 // lib/pages/cart_page.dart
 
 import 'package:flutter/material.dart';
-import 'package:ecommerse_website/models/product.dart';
+import 'package:ecommerse_website/models/product.dart'; // Assuming this path is correct
 
 class CartPage extends StatefulWidget {
   final List<CartItem> cartItems;
+  // --- CHANGE 1: Add a callback for when items should be removed ---
+  final Function(Set<int> productIds) onItemsRemoved;
 
   const CartPage({
     super.key,
     required this.cartItems,
+    required this.onItemsRemoved, // Make it required
   });
 
   @override
@@ -23,14 +26,12 @@ class CartItem {
 }
 
 class _CartPageState extends State<CartPage> {
-  late List<CartItem> items;
+  // We can now directly use widget.cartItems, but keeping a local copy
+  // is still fine for managing quantity changes that might not be persisted immediately.
+  // For simplicity and correctness with deletion, we'll directly reference the widget's list.
   final Set<int> _selectedItemIds = {};
 
-  @override
-  void initState() {
-    super.initState();
-    items = List.from(widget.cartItems);
-  }
+  // initState is no longer needed to copy the list.
 
   void _toggleSelection(int productId) {
     setState(() {
@@ -44,32 +45,41 @@ class _CartPageState extends State<CartPage> {
 
   void _selectAllItems() {
     setState(() {
-      if (_selectedItemIds.length == items.length) {
+      if (_selectedItemIds.length == widget.cartItems.length) {
         _selectedItemIds.clear();
       } else {
-        for (var item in items) {
+        for (var item in widget.cartItems) {
           _selectedItemIds.add(item.product.id);
         }
       }
     });
   }
 
+  // --- CHANGE 2: Call the callback instead of modifying local state ---
   void _deleteSelectedItems() {
+    // Call the function passed from the parent widget
+    widget.onItemsRemoved(_selectedItemIds);
+
+    // Clear the local selection state
     setState(() {
-      items.removeWhere((item) => _selectedItemIds.contains(item.product.id));
       _selectedItemIds.clear();
     });
+
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Selected items removed')),
     );
   }
 
-  void increaseQuantity(int index) => setState(() => items[index].quantity++);
-  void decreaseQuantity(int index) => setState(() { if (items[index].quantity > 1) items[index].quantity--; });
+  // Note: These quantity functions still only modify the local state.
+  // If you want quantity changes to persist, you'll need to apply the same
+  // callback pattern for them. For now, we'll leave them as-is.
+  void increaseQuantity(int index) => setState(() => widget.cartItems[index].quantity++);
+  void decreaseQuantity(int index) => setState(() { if (widget.cartItems[index].quantity > 1) widget.cartItems[index].quantity--; });
+
 
   double getSelectedItemsPrice() {
     double total = 0;
-    for (var item in items) {
+    for (var item in widget.cartItems) {
       if (_selectedItemIds.contains(item.product.id)) {
         total += item.product.price * item.quantity;
       }
@@ -82,16 +92,10 @@ class _CartPageState extends State<CartPage> {
     bool hasSelection = _selectedItemIds.isNotEmpty;
 
     return Scaffold(
-      /*appBar: AppBar(
-        title: const Text('My Cart'),
-        backgroundColor: Colors.white,
-        elevation: 1,
-        foregroundColor: Colors.black,
-        automaticallyImplyLeading: false,
-      ),*/
+      /* ... AppBar ... */
       floatingActionButton: hasSelection ? _buildCheckoutFab() : null,
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
-      body: items.isEmpty
+      body: widget.cartItems.isEmpty
           ? _buildEmptyCart()
           : Column(
         children: [
@@ -104,9 +108,10 @@ class _CartPageState extends State<CartPage> {
 
   Widget _buildSelectionHeader() {
     bool hasSelection = _selectedItemIds.isNotEmpty;
-    bool allSelected = hasSelection && _selectedItemIds.length == items.length;
+    bool allSelected = hasSelection && _selectedItemIds.length == widget.cartItems.length;
 
     return AnimatedContainer(
+      // ... same as before
       duration: const Duration(milliseconds: 300),
       curve: Curves.easeInOut,
       height: hasSelection ? 60 : 0,
@@ -133,6 +138,7 @@ class _CartPageState extends State<CartPage> {
   }
 
   Widget _buildEmptyCart() {
+    // ... same as before
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -149,11 +155,12 @@ class _CartPageState extends State<CartPage> {
 
   Widget _buildCartList() {
     return ListView.separated(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 80), // Add padding at the bottom to avoid FAB overlap
-      itemCount: items.length,
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
+      // --- CHANGE 3: Use widget.cartItems instead of the local 'items' list ---
+      itemCount: widget.cartItems.length,
       separatorBuilder: (_, __) => const SizedBox(height: 16),
       itemBuilder: (context, index) {
-        final item = items[index];
+        final item = widget.cartItems[index];
         final isSelected = _selectedItemIds.contains(item.product.id);
 
         return InkWell(
@@ -211,18 +218,17 @@ class _CartPageState extends State<CartPage> {
         mainAxisSize: MainAxisSize.min,
         children: [
           IconButton(onPressed: () => decreaseQuantity(index), icon: const Icon(Icons.remove, size: 16)),
-          Text(items[index].quantity.toString(), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          Text(widget.cartItems[index].quantity.toString(), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
           IconButton(onPressed: () => increaseQuantity(index), icon: const Icon(Icons.add, size: 16)),
         ],
       ),
     );
   }
 
-  // --- FIX: Added GestureDetector to make the FAB tappable ---
   Widget _buildCheckoutFab() {
+    // ... same as before
     return GestureDetector(
       onTap: () {
-        // This is where the UI-only checkout action happens
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Checkout for \$${getSelectedItemsPrice().toStringAsFixed(2)}! (UI Demo)'),
